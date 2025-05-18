@@ -23,6 +23,8 @@ int listen_socket = 0;
 int cur_id = 0;
 int client_index = 1;
 Client clients[10000];
+fd_set readfds;
+fd_set writefds;
 
 int extract_message(char **buf, char **msg) {
   char *newbuf;
@@ -92,6 +94,16 @@ void new_client(int fd) {
   maxfd = fd > maxfd ? fd : maxfd;
 }
 
+void update_maxfd() {
+  int max = -1;
+  for (int i = 0; i < client_index; i++) {
+    if (clients[i].fd > max) {
+      max = clients[i].fd;
+    }
+  }
+  maxfd = max;
+}
+
 void delete_client(int fd) {
   Client *c = find_client(fd);
   if (c == NULL) {
@@ -101,16 +113,7 @@ void delete_client(int fd) {
   free(c->buf);
   c->buf = NULL;
   close(fd);
-}
-
-void update_maxfd() {
-  int max = -1;
-  for (int i = 0; i < client_index; i++) {
-    if (clients[i].fd > max) {
-      max = clients[i].fd;
-    }
-  }
-  maxfd = max;
+  update_maxfd();
 }
 
 void add_buffer(char *buff, int except) {
@@ -126,6 +129,21 @@ void add_buffer(char *buff, int except) {
   }
 }
 
+void broadcast(int except, const char *buff) {
+  for (int i = 0; i < client_index; ++i) {
+    int fd = clients[i].fd;
+    if (fd == except || fd == listen_socket || fd == -1 ||
+        !FD_ISSET(fd, &writefds)) {
+      continue;
+    }
+    ssize_t sent = send(fd, buff, strlen(buff), 0);
+    // errの場合どうする？？？
+    if (sent < 0) {
+      err_exit("Fatal error\n");
+    }
+  }
+}
+
 void accept_client() {
   int client = accept(listen_socket, NULL, NULL);
   // printf("accepting client: %d\n", client);
@@ -135,103 +153,76 @@ void accept_client() {
   new_client(client);
   char buff[100] = {0};
   sprintf(buff, "server: client %d just arrived\n", cur_id - 1);
-  add_buffer(buff, client);
+  broadcast(client, buff);
 }
 
-void send_message(int fd) {
-  // printf("sending message: %d\n", fd);
-  char *buff = NULL;
-  Client *c = find_client(fd);
-  if (c == NULL) {
-    return;
+// void send_message(int fd) {
+//   // printf("sending message: %d\n", fd);
+//   char *buff = NULL;
+//   Client *c = find_client(fd);
+//   if (c == NULL) {
+//     return;
+//   }
+//   int re = extract_message(&c->buf, &buff);
+//   if (re == -1) {
+//     err_exit("Fatal error\n");
+//   }
+//   if (re == 0) {
+//     return;
+//   }
+//   // printf("sending: %s\n", buff);
+//   // 本当はnon blockingで送信したほうがいい
+//   // ssize_t sent = send(fd, buff, strlen(buff), MSG_DONTWAIT |
+//   MSG_NOSIGNAL); ssize_t sent = send(fd, buff, strlen(buff), 0); free(buff);
+//   // errの場合どうする？？？
+//   if (sent < 0) {
+//     err_exit("Fatal error\n");
+//   }
+//   // printf("%zu bytes sent\n", sent);
+//   // if (c->buf[0] == '\0') {
+//   //   free(c->buf);
+//   //   c->buf = NULL;
+//   // }
+// }
+
+void send_message(Client *c) {
+  char *msg;
+  char client_info[100] = {0};
+  sprintf(client_info, "client %d: ", c->id);
+  while (extract_message(&c->buf, &msg) > 0) {
+    broadcast(c->fd, client_info);
+    broadcast(c->fd, msg);
+    free(msg);
   }
-  int re = extract_message(&c->buf, &buff);
-  if (re == -1) {
-    err_exit("Fatal error\n");
-  }
-  if (re == 0) {
-    return;
-  }
-  // printf("sending: %s\n", buff);
-  // 本当はnon blockingで送信したほうがいい
-  // ssize_t sent = send(fd, buff, strlen(buff), MSG_DONTWAIT | MSG_NOSIGNAL);
-  ssize_t sent = send(fd, buff, strlen(buff), 0);
-  free(buff);
-  // errの場合どうする？？？
-  if (sent < 0) {
-    err_exit("Fatal error\n");
-  }
-  // printf("%zu bytes sent\n", sent);
-  // if (c->buf[0] == '\0') {
-  //   free(c->buf);
-  //   c->buf = NULL;
-  // }
 }
 
 void recv_message(int fd) {
   // printf("recving message: %d\n", fd);
   char buff[2000] = {0};
-  char client_info[100] = {0};
   Client *c = find_client(fd);
   if (c == NULL) {
     return;
   }
-  sprintf(client_info, "client %d: ", c->id);
   // sprintf(buff, client_info);
   // ssize_t re = recv(fd, &buff[strlen(buff)], 1024, MSG_DONTWAIT |
   // MSG_NOSIGNAL);
   // 本当はnon blockingで受信したほうがいい
-  ssize_t re = recv(fd, &buff[strlen(buff)], 1024, 0);
+  ssize_t re = recv(fd, buff, 1024, 0);
   if (re < 0) {
     err_exit("Fatal error\n");
   }
-  char *formatted = NULL;
   if (re == 0) {
     bzero(buff, sizeof(buff));
     sprintf(buff, "server: client %d just left\n", c->id);
-    formatted = buff;
     delete_client(fd);
-    update_maxfd();
-  } else if (strstr(buff, "\n") == NULL) {
-    formatted = str_join(formatted, client_info);
-    if (formatted == NULL) {
-      err_exit("Fatal error\n");
-    }
-    formatted = str_join(formatted, buff);
-    if (formatted == NULL) {
-      err_exit("Fatal error\n");
-    }
-  } else {
-    char *start = buff;
-    char *nl;
-    while ((nl = strstr(start, "\n"))) {
-      *nl = '\0';
-      formatted = str_join(formatted, client_info);
-      if (formatted == NULL) {
-        err_exit("Fatal error\n");
-      }
-      formatted = str_join(formatted, start);
-      if (formatted == NULL) {
-        err_exit("Fatal error\n");
-      }
-      formatted = str_join(formatted, "\n");
-      if (formatted == NULL) {
-        err_exit("Fatal error\n");
-      }
-      start = nl + 1;
-    }
-    // 最後に改行なしの行が残っている場合も処理
-    if (*start != '\0') {
-      formatted = str_join(formatted, client_info);
-      if (formatted == NULL)
-        err_exit("Fatal error\n");
-
-      formatted = str_join(formatted, start);
-      if (formatted == NULL)
-        err_exit("Fatal error\n");
-    }
+    broadcast(fd, buff);
+    return;
   }
-  add_buffer(formatted, c->fd);
+  c->buf = str_join(c->buf, buff);
+  if (c->buf == NULL) {
+    err_exit("Fatal error\n");
+  }
+  send_message(c);
 }
 
 void register_event(fd_set *read, fd_set *write) {
@@ -243,7 +234,7 @@ void register_event(fd_set *read, fd_set *write) {
     }
     // printf("register fd %d\n", clients[i].fd);
     FD_SET(clients[i].fd, read);
-    if (clients[i].buf != NULL) {
+    if (clients[i].fd != listen_socket) {
       FD_SET(clients[i].fd, write);
     }
   }
@@ -251,10 +242,8 @@ void register_event(fd_set *read, fd_set *write) {
 
 void event_loop(int listen_socket) {
   while (1) {
-    fd_set read;
-    fd_set write;
-    register_event(&read, &write);
-    int re = select(maxfd + 1, &read, &write, NULL, NULL);
+    register_event(&readfds, &writefds);
+    int re = select(maxfd + 1, &readfds, &writefds, NULL, NULL);
     // printf("events happend: %d\n", re);
     if (re < 0) {
       err_exit("Fatal error\n");
@@ -265,11 +254,11 @@ void event_loop(int listen_socket) {
       if (fd == -1) {
         continue;
       }
-      if (FD_ISSET(fd, &write)) {
-        // printf("%d socket: write\n", fd);
-        send_message(fd);
-      }
-      if (FD_ISSET(fd, &read)) {
+      // if (FD_ISSET(fd, &writefds)) {
+      //   // printf("%d socket: write\n", fd);
+      //   send_message(fd);
+      // }
+      if (FD_ISSET(fd, &readfds)) {
         // printf("%d socket: read\n", fd);
         if (fd == listen_socket) {
           accept_client();
