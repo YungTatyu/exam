@@ -205,16 +205,30 @@ void recv_message(int fd) {
     char *start = buff;
     char *nl;
     while ((nl = strstr(start, "\n"))) {
+      *nl = '\0';
       formatted = str_join(formatted, client_info);
       if (formatted == NULL) {
         err_exit("Fatal error\n");
       }
       formatted = str_join(formatted, start);
-      *nl = '\0';
+      if (formatted == NULL) {
+        err_exit("Fatal error\n");
+      }
+      formatted = str_join(formatted, "\n");
       if (formatted == NULL) {
         err_exit("Fatal error\n");
       }
       start = nl + 1;
+    }
+    // 最後に改行なしの行が残っている場合も処理
+    if (*start != '\0') {
+      formatted = str_join(formatted, client_info);
+      if (formatted == NULL)
+        err_exit("Fatal error\n");
+
+      formatted = str_join(formatted, start);
+      if (formatted == NULL)
+        err_exit("Fatal error\n");
     }
   }
   add_buffer(formatted, c->fd);
