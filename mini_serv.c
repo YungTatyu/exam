@@ -153,7 +153,9 @@ void send_message(int fd) {
     return;
   }
   // printf("sending: %s\n", buff);
-  ssize_t sent = send(fd, buff, strlen(buff), MSG_DONTWAIT | MSG_NOSIGNAL);
+  // 本当はnon blockingで送信したほうがいい
+  // ssize_t sent = send(fd, buff, strlen(buff), MSG_DONTWAIT | MSG_NOSIGNAL);
+  ssize_t sent = send(fd, buff, strlen(buff), 0);
   free(buff);
   // errの場合どうする？？？
   if (sent < 0) {
@@ -174,7 +176,10 @@ void recv_message(int fd) {
     return;
   }
   sprintf(buff, "client %d: ", c->id);
-  ssize_t re = recv(fd, &buff[strlen(buff)], 1024, MSG_DONTWAIT | MSG_NOSIGNAL);
+  // ssize_t re = recv(fd, &buff[strlen(buff)], 1024, MSG_DONTWAIT |
+  // MSG_NOSIGNAL);
+  // 本当はnon blockingで受信したほうがいい
+  ssize_t re = recv(fd, &buff[strlen(buff)], 1024, 0);
   if (re < 0) {
     err_exit("Fatal error\n");
   }
