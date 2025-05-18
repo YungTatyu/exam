@@ -171,11 +171,13 @@ void send_message(int fd) {
 void recv_message(int fd) {
   // printf("recving message: %d\n", fd);
   char buff[2000] = {0};
+  char client_info[100] = {0};
   Client *c = find_client(fd);
   if (c == NULL) {
     return;
   }
-  sprintf(buff, "client %d: ", c->id);
+  sprintf(client_info, "client %d: ", c->id);
+  // sprintf(buff, client_info);
   // ssize_t re = recv(fd, &buff[strlen(buff)], 1024, MSG_DONTWAIT |
   // MSG_NOSIGNAL);
   // 本当はnon blockingで受信したほうがいい
@@ -183,13 +185,39 @@ void recv_message(int fd) {
   if (re < 0) {
     err_exit("Fatal error\n");
   }
+  char *formatted = NULL;
   if (re == 0) {
     bzero(buff, sizeof(buff));
     sprintf(buff, "server: client %d just left\n", c->id);
+    formatted = buff;
     delete_client(fd);
     update_maxfd();
+  } else if (strstr(buff, "\n") == NULL) {
+    formatted = str_join(formatted, client_info);
+    if (formatted == NULL) {
+      err_exit("Fatal error\n");
+    }
+    formatted = str_join(formatted, buff);
+    if (formatted == NULL) {
+      err_exit("Fatal error\n");
+    }
+  } else {
+    char *start = buff;
+    char *nl;
+    while ((nl = strstr(start, "\n"))) {
+      formatted = str_join(formatted, client_info);
+      if (formatted == NULL) {
+        err_exit("Fatal error\n");
+      }
+      formatted = str_join(formatted, start);
+      *nl = '\0';
+      if (formatted == NULL) {
+        err_exit("Fatal error\n");
+      }
+      start = nl + 1;
+    }
   }
-  add_buffer(buff, c->fd);
+  add_buffer(formatted, c->fd);
 }
 
 void register_event(fd_set *read, fd_set *write) {
